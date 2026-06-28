@@ -1,0 +1,22 @@
+# Video files
+*.MP4
+*.mp4
+*.avi
+*.mov
+
+# Temp / intermediate data
+.tmp/
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Google OAuth tokens
+token.json
+
+# OS
+.DS_Store
+Thumbs.db
