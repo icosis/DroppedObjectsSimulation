@@ -341,7 +341,7 @@ def find_pipe_above_water(current_frame, bg_frame, y_top, y_surface, x_left, x_r
 
 # ── Single-video processing ────────────────────────────────────────────────────
 
-def process_video(video_path, calib, debug=False):
+def process_video(video_path, calib, debug=False, save_debug=False):
     """
     Returns dict {displacement_cm, x_entry_px, x_contact_px} or None on failure.
 
@@ -392,6 +392,22 @@ def process_video(video_path, calib, debug=False):
 
     if debug:
         cv2.namedWindow("Debug", cv2.WINDOW_NORMAL)
+
+    # Set up video writer for --save-debug
+    debug_writer = None
+    if save_debug:
+        probe = cv2.VideoCapture(video_path)
+        fps_out = probe.get(cv2.CAP_PROP_FPS) or 30
+        w_out   = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h_out   = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        probe.release()
+        base = os.path.splitext(os.path.basename(video_path))[0]
+        out_path = os.path.join(os.path.dirname(video_path), f"debug_{base}.mp4")
+        debug_writer = cv2.VideoWriter(
+            out_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps_out / 4, (w_out, h_out)
+        )
 
     tank_h = y_bottom - y_surface   # tank height in pixels
 
@@ -486,6 +502,8 @@ def process_video(video_path, calib, debug=False):
             status = f"frame {frame_idx}  entry={'set' if x_entry else '--'}"
             cv2.putText(disp, status, (8, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            if debug_writer:
+                debug_writer.write(disp)
             cv2.imshow("Debug", disp)
             if x_entry is not None and not entry_shown:
                 cv2.putText(disp, "ENTRY DETECTED -- press any key to continue",
@@ -505,6 +523,9 @@ def process_video(video_path, calib, debug=False):
             break
 
     cap.release()
+    if debug_writer:
+        debug_writer.release()
+        print(f"  Debug video saved → {out_path}")
     if debug:
         cv2.putText(disp, "END — press any key to close", (8, disp.shape[0] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -555,6 +576,8 @@ def main():
                         help="Redo calibration even if calibration.json exists")
     parser.add_argument("--debug",       action="store_true",
                         help="Show frame-by-frame detection window")
+    parser.add_argument("--save-debug",  action="store_true",
+                        help="Save the debug overlay as <video>_debug.mp4")
     parser.add_argument("--video",       metavar="FILE",
                         help="Process only this one video (for testing)")
     args = parser.parse_args()
@@ -603,7 +626,7 @@ def main():
         angle = labels.get(name, "")
         print(f"[{i+1:3d}/{len(targets)}] {name}  angle={angle or '?'}", end="  ")
         sys.stdout.flush()
-        result = process_video(v, calib, debug=args.debug)
+        result = process_video(v, calib, debug=args.debug, save_debug=args.save_debug)
         if result:
             print(f"→ {result['displacement_cm']:.2f} cm")
         else:
