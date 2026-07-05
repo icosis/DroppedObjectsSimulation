@@ -4,8 +4,8 @@ batch_entry_angles.py
 Runs entry-angle detection on every labelled video and saves results to
 entry_angles.csv in the current directory.
 
-Run from the Data folder (where calibration.json lives):
-    python "C:\\Users\\Michael\\Dropped\\DroppedObjectsSimulation\\tools\\batch_entry_angles.py"
+Run from the video folder (where calibration.json and labels.json live):
+    python C:/Users/micha/DroppedSim/tools/batch_entry_angles.py
 """
 
 import sys
@@ -18,8 +18,8 @@ from measure_entry_angle import (
     load_calibration, detect_surface, measure_entry_angle, theoretical_pitch_down
 )
 
-VIDEO_FOLDER     = "Dropped Object Folder"
-LABELS_FILE      = os.path.join(VIDEO_FOLDER, "labels.json")
+VIDEO_FOLDER     = "."
+LABELS_FILE      = "labels.json"
 CALIBRATION_FILE = "calibration.json"
 OUTPUT_CSV       = "entry_angles.csv"
 
@@ -102,18 +102,24 @@ def main():
     print(f"Done: {ok} succeeded, {fails} failed")
     print(f"Results saved to: {OUTPUT_CSV}")
 
-    # Print summary by angle group
+    # Print summary by angle group.  Detection failures (blob caught the ramp,
+    # a splash, or the pipe after rotating) produce angles far from prediction —
+    # exclude |residual| > 12° so they don't skew the group means.
+    RESID_CUTOFF = 12.0
     print(f"\n── Mean measured entry angle by ramp angle ──────────────")
     for ramp in [30, 45, 60]:
-        vals = [r["measured_angle_deg"] for r in rows
-                if r["ramp_angle_deg"] == ramp
-                and isinstance(r["measured_angle_deg"], float)]
-        if vals:
-            mean = round(sum(vals) / len(vals), 1)
-            delta, _ = theoretical_pitch_down(ramp)
-            predicted = round(ramp + delta, 1)
+        delta, _ = theoretical_pitch_down(ramp)
+        predicted = round(ramp + delta, 1)
+        all_vals = [r["measured_angle_deg"] for r in rows
+                    if r["ramp_angle_deg"] == ramp
+                    and isinstance(r["measured_angle_deg"], float)]
+        good = [v for v in all_vals if abs(v - predicted) <= RESID_CUTOFF]
+        if good:
+            mean = round(sum(good) / len(good), 1)
+            excluded = len(all_vals) - len(good)
+            note = f", {excluded} outlier(s) excluded" if excluded else ""
             print(f"  {ramp}°  →  mean measured {mean}°  "
-                  f"(predicted {predicted}°,  n={len(vals)})")
+                  f"(predicted {predicted}°,  n={len(good)}{note})")
 
 
 if __name__ == "__main__":

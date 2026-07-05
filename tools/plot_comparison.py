@@ -35,9 +35,9 @@ COLORS = {30: "#2F6FB8", 45: "#C77F1B", 60: "#B5384B"}
 ANGLES = [30, 45, 60]
 
 # ── Load and clean data ────────────────────────────────────────────────────────
-# Only keep Group B (x_entry >= 920): these are confirmed accurate detections.
-# Group A (x_entry < 920) showed the orange dot at the left tank wall before
-# the pipe arrived — false positives from water surface disturbances.
+# Since the entry-detection fix (min/max entry-x window in analyze_videos.py),
+# all entries land in the valid range x≈980–1130.  The filters below remain as
+# safety nets against future detection regressions.
 valid = {a: [] for a in ANGLES}
 
 with open(RESULTS_CSV) as f:
@@ -50,9 +50,9 @@ with open(RESULTS_CSV) as f:
         xc    = int(row["x_contact_px"])
         if xc < xe:    # pipe moved backward — bad read
             continue
-        if disp > 25:  # outlier (C0055, C0066 — false left-wall detection)
+        if disp > 25:  # outlier (C0055 — contact detection failure)
             continue
-        if xe < 920:   # false detection at left tank wall — discard
+        if xe < 920:   # safety net: left-wall ripple false positive
             continue
         valid[angle].append(disp)
 

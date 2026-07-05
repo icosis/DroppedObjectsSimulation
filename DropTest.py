@@ -10,7 +10,7 @@ Pipe modelled : STZ 3/8" × 3" Schedule 40 galvanised steel nipple
                 OD = 0.675 in, wall = 0.091 in, ID = 0.493 in, length = 3 in
                 Open-ended: buoyancy acts on steel cross-section only.
 
-Independent variable : ramp angle (45 deg, 60 deg, 75 deg by default)
+Independent variable : ramp angle (30 deg, 45 deg, 60 deg by default)
 Dependent variable    : horizontal displacement underwater (cm)
 
 Physics:
@@ -234,7 +234,7 @@ def simulate_drop(theta_deg, release_height=RELEASE_HEIGHT,
 
 
 # ── Batch run ─────────────────────────────────────────────────────────────────
-def run_experiment(angles=(45, 60, 75), release_height=RELEASE_HEIGHT,
+def run_experiment(angles=(30, 45, 60), release_height=RELEASE_HEIGHT,
                    mu=DEFAULT_MU):
     results = [simulate_drop(a, release_height, mu) for a in angles]
     df = pd.DataFrame([{
@@ -345,7 +345,7 @@ def plot_orientation_history(results, filename="orientation_history.png"):
     return fig
 
 
-def plot_angle_sweep(angle_range=np.arange(35, 86, 2),
+def plot_angle_sweep(angle_range=np.arange(25, 86, 2),
                      release_height=RELEASE_HEIGHT, mu=DEFAULT_MU,
                      filename="angle_sweep.png"):
     disps = [simulate_drop(a, release_height, mu)["displacement_cm"]

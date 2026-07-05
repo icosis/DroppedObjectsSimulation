@@ -40,14 +40,12 @@ import glob
 import csv
 import argparse
 import sys
-from collections import deque
 
 CALIBRATION_FILE = "calibration.json"
 LABELS_FILE      = "labels.json"
 OUTPUT_CSV       = "results.csv"
 
 # Detection tuning
-DIFF_WINDOW  = 8      # compare frame t to frame (t - DIFF_WINDOW); higher = more sensitive to slow motion
 THRESHOLD    = 12     # pixel brightness change to count as motion
 MIN_AREA_PX  = 250    # minimum contour area to be the pipe (filters ripple noise; pipe blob is much larger)
 CONTACT_TOL_CM = 3.0  # centroid counts as "at floor" within this many cm
@@ -58,7 +56,7 @@ CONTACT_TOL_CM = 3.0  # centroid counts as "at floor" within this many cm
 def label_videos(videos):
     """
     Shows a frame from each unlabelled video. Press:
-      4 → 45°    6 → 60°    7 → 75°
+      3 → 30°    4 → 45°    6 → 60°
       S → skip (unsure, come back later)
       Q → quit and save progress
 
@@ -273,9 +271,10 @@ def detect_water_surface(frame, x_tank_left, x_tank_right, y_hint, search_range_
 
 def find_nose(current_frame, old_frame, y_surface, y_bottom, x_tank_left=0, x_tank_right=None):
     """
-    Compares current_frame to old_frame (DIFF_WINDOW frames ago) to find
-    what is moving. Returns (x, y) of the lowest moving point between the
-    water surface and the floor, or None if nothing found.
+    Compares current_frame to old_frame (the static first frame, captured while
+    the pipe is still on the ramp) to find what is moving. Returns the centroid
+    (x, y) of the largest moving contour between the water surface and the
+    floor, plus its leftmost x, or (None, None) if nothing found.
 
     Using temporal diff means:
       - Static reflections → ignored (same in both frames)
@@ -315,30 +314,6 @@ def find_nose(current_frame, old_frame, y_surface, y_bottom, x_tank_left=0, x_ta
     return (cx, cy), left_x
 
 
-def find_pipe_above_water(current_frame, bg_frame, y_top, y_surface, x_left, x_right):
-    """
-    Looks for the pipe on the ramp ABOVE the water surface.
-    Returns the leftmost x of the largest moving contour, or None.
-    Used to anchor entry detection — if the pipe is heading toward x=1000 above
-    water, a false ripple blob at x=850 will be rejected.
-    """
-    diff = cv2.absdiff(current_frame, bg_frame)
-    gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-    _, mask = cv2.threshold(gray, THRESHOLD, 255, cv2.THRESH_BINARY)
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k)
-    roi = np.zeros_like(mask)
-    roi[y_top:y_surface, x_left:x_right] = mask[y_top:y_surface, x_left:x_right]
-    contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    c = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(c) < MIN_AREA_PX:
-        return None
-    return int(c[:, 0, 0].min())   # leftmost x = pipe nose on ramp
-
-
 # ── Single-video processing ────────────────────────────────────────────────────
 
 def process_video(video_path, calib, debug=False, save_debug=False):
@@ -375,20 +350,32 @@ def process_video(video_path, calib, debug=False, save_debug=False):
     START_FRAME = 10
     cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
 
-    x_entry           = None
-    x_contact         = None
-    last_nose         = None
-    y_history         = []    # recent centroid y-positions for velocity detection
-    in_water           = False # True once pipe is confirmed below surface
+    x_entry            = None
+    x_contact          = None
+    last_nose          = None
+    y_history          = []    # recent centroid y-positions for velocity detection
     entry_shown        = False # True once we have paused on the detection frame
-    surface_zone_hits  = 0    # consecutive frames with valid nose in surface zone
+    surface_zone_hits  = 0     # consecutive descending frames in surface zone
+    prev_zone_y        = None  # previous surface-zone centroid y, for descent check
 
-    # Pipe always enters in the right portion of the tank — require entry x to be
-    # at least 40% of tank width from the left wall.  This blocks water-ripple
-    # false positives at the left wall (x≈850) while keeping all real entries (x≈1000).
+    # The pipe always enters between 20% and 40% of tank width from the left wall
+    # (real entries cluster at x≈990–1130).  This range blocks water-ripple false
+    # positives at the left wall (x≈850) and splash artefacts further right (x≈1190).
     tank_w_full = (x_tank_right if x_tank_right else 1920) - x_tank_left
     min_entry_x = x_tank_left + int(tank_w_full * 0.20)
     max_entry_x = x_tank_left + int(tank_w_full * 0.40)
+
+    # Contact plausibility: the pipe physically cannot rest more than ~25 cm right
+    # of its entry point (max observed 14 cm, sim max 17.5 cm), and contours at the
+    # right wall are slosh reflections, not the pipe.
+    CONTACT_WALL_MARGIN_PX = 40
+
+    def plausible_contact(cx_):
+        if x_entry is not None and cx_ > x_entry + int(25 * px_per_cm):
+            return False
+        if x_tank_right and cx_ >= x_tank_right - CONTACT_WALL_MARGIN_PX:
+            return False
+        return True
 
     if debug:
         cv2.namedWindow("Debug", cv2.WINDOW_NORMAL)
@@ -434,14 +421,19 @@ def process_video(video_path, calib, debug=False, save_debug=False):
             # ── Entry: prefer detection near surface; fall back to first in-water detection
             if x_entry is None and ny >= y_surface:
                 candidate_x = nose_left_x + 20
-                # Reject detections in the left 40% of tank — those are ripple
-                # false positives, not the pipe (pipe always enters right of centre)
+                # Reject detections outside the physical entry window (see
+                # min_entry_x / max_entry_x above) — ripples and splash artefacts
                 if candidate_x < min_entry_x or candidate_x > max_entry_x:
                     surface_zone_hits = 0
-                    pass  # out of valid entry range
+                    prev_zone_y = None
                 elif y_surface <= ny <= y_surface + 120:
-                    # Require 2 consecutive frames to rule out single-frame splashes
-                    surface_zone_hits += 1
+                    # Require 2 consecutive frames WITH descent between them:
+                    # a real entry drops ~30 px/frame, residual slosh bobs in place.
+                    if prev_zone_y is not None and ny >= prev_zone_y + 5:
+                        surface_zone_hits += 1
+                    else:
+                        surface_zone_hits = 1
+                    prev_zone_y = ny
                     if surface_zone_hits >= 2:
                         x_entry = candidate_x
                         if debug:
@@ -449,6 +441,7 @@ def process_video(video_path, calib, debug=False, save_debug=False):
                 elif last_nose is None or ny >= last_nose[1] + 12:
                     # Fallback: fast-moving detection deeper in tank
                     surface_zone_hits = 0
+                    prev_zone_y = None
                     x_entry = candidate_x
                     if debug:
                         print(f"  f{frame_idx}: ACCEPTED (fallback) cand={candidate_x} depth={ny - y_surface}px")
@@ -460,7 +453,7 @@ def process_video(video_path, calib, debug=False, save_debug=False):
 
             if x_entry is not None and x_contact is None:
                 # Method 1: centroid within tolerance of floor
-                if ny >= y_bottom - tol_px:
+                if ny >= y_bottom - tol_px and plausible_contact(nx):
                     x_contact = nx
                     should_break = True
 
@@ -470,23 +463,24 @@ def process_video(video_path, calib, debug=False, save_debug=False):
                         and len(y_history) == 12
                         and ny > y_surface + tank_h * 0.6):
                     dy = y_history[-1] - y_history[0]
-                    if abs(dy) < 4:
+                    if abs(dy) < 4 and plausible_contact(nx):
                         x_contact = nx
                         should_break = True
 
         else:
             surface_zone_hits = 0
+            prev_zone_y = None
             # Detection lost — if last position was near floor, use it
             if (x_entry is not None
                     and x_contact is None
                     and last_nose is not None):
                 lx, ly = last_nose
-                if ly >= y_bottom - int(6 * px_per_cm):
+                if ly >= y_bottom - int(6 * px_per_cm) and plausible_contact(lx):
                     x_contact = lx
                     should_break = True
 
         # ── Debug overlay (after processing so x_entry is current) ─────────
-        if debug:
+        if debug or debug_writer:
             disp = frame.copy()
             h, w = disp.shape[:2]
             cv2.line(disp, (0, y_surface), (w, y_surface), (255, 200, 0), 1)
@@ -504,6 +498,8 @@ def process_video(video_path, calib, debug=False, save_debug=False):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
             if debug_writer:
                 debug_writer.write(disp)
+
+        if debug:
             cv2.imshow("Debug", disp)
             if x_entry is not None and not entry_shown:
                 cv2.putText(disp, "ENTRY DETECTED -- press any key to continue",
@@ -537,8 +533,8 @@ def process_video(video_path, calib, debug=False, save_debug=False):
         print(f"  WARN: water entry not detected")
         return None
     if x_contact is None:
-        # Use last known nose position as best guess
-        if last_nose is not None:
+        # Use last known nose position as best guess (if physically plausible)
+        if last_nose is not None and plausible_contact(last_nose[0]):
             x_contact = last_nose[0]
             print(f"  WARN: floor contact not confirmed — using last known position")
         else:
@@ -655,7 +651,7 @@ def main():
         print(f"Results saved to: {OUTPUT_CSV}")
     print(f"\nNext steps:")
     print(f"  1. Open {OUTPUT_CSV}")
-    print(f"  2. Fill in the 'angle_deg' column for each video (45, 60, or 75)")
+    print(f"  2. Fill in the 'angle_deg' column for each video (30, 45, or 60)")
     print(f"  3. Any rows showing ERROR — review with: "
           f"python tools\\analyze_videos.py --debug --video <filename>")
     print(f"\nNote: horizontal scale = vertical scale (from ruler).")

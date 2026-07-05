@@ -6,8 +6,8 @@ the water surface, then compares it to the theoretical ramp angle plus
 the pitch-down prediction.
 
 Usage (run from the folder containing calibration.json):
-    python tools/measure_entry_angle.py --video "Dropped Object Folder\C0051.MP4" --ramp 30 --debug
-    python tools/measure_entry_angle.py --video "Dropped Object Folder\C0051.MP4" --ramp 30
+    python tools/measure_entry_angle.py --video C0051.MP4 --ramp 30 --debug
+    python tools/measure_entry_angle.py --video C0051.MP4 --ramp 30
 
 Requires calibration.json in the current directory.
 """
