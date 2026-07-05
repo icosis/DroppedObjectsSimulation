@@ -13,6 +13,10 @@ import os
 import json
 import csv
 
+# Force UTF-8 stdout so redirected output doesn't crash on arrows/box chars
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(__file__))
 from measure_entry_angle import (
     load_calibration, detect_surface, measure_entry_angle, theoretical_pitch_down

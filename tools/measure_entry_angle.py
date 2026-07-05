@@ -19,6 +19,10 @@ import sys
 import os
 import json
 
+# Force UTF-8 stdout so redirected output doesn't crash on arrows/box chars
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # ── Tuning ────────────────────────────────────────────────────────────────────
 THRESHOLD        = 12    # pixel brightness change to count as motion
 MIN_AREA_PX      = 300   # minimum contour area to be the pipe

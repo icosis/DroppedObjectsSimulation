@@ -41,6 +41,12 @@ import csv
 import argparse
 import sys
 
+# Windows consoles/pipes may default to cp1252, which cannot encode the
+# arrows/box characters used in status output — force UTF-8 so redirected
+# output (e.g. running as a background job) doesn't crash the script.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 CALIBRATION_FILE = "calibration.json"
 LABELS_FILE      = "labels.json"
 OUTPUT_CSV       = "results.csv"
@@ -556,6 +562,8 @@ def find_videos():
     for ext in ["*.mp4", "*.MP4", "*.mov", "*.MOV", "*.avi", "*.AVI"]:
         for v in glob.glob(ext):
             key = v.lower()
+            if key.startswith("debug_"):   # skip our own --save-debug outputs
+                continue
             if key not in seen:
                 seen.add(key)
                 videos.append(v)

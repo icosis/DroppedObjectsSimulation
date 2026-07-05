@@ -50,7 +50,7 @@ with open(RESULTS_CSV) as f:
         xc    = int(row["x_contact_px"])
         if xc < xe:    # pipe moved backward — bad read
             continue
-        if disp > 25:  # outlier (C0055 — contact detection failure)
+        if disp > 25:  # safety net: physically implausible displacement
             continue
         if xe < 920:   # safety net: left-wall ripple false positive
             continue
