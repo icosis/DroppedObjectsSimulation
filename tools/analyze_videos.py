@@ -303,21 +303,22 @@ def find_nose(current_frame, old_frame, y_surface, y_bottom, x_tank_left=0, x_ta
 
     contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return None, None
+        return None, None, 0
 
     # Largest contour = pipe body (reflections are usually smaller or fragmented)
     c = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(c) < MIN_AREA_PX:
-        return None, None
+    area = cv2.contourArea(c)
+    if area < MIN_AREA_PX:
+        return None, None, 0
 
     # Use centroid — more robust than lowest point, which gets pulled down by reflections
     M = cv2.moments(c)
     if M["m00"] == 0:
-        return None, None
+        return None, None, 0
     cx = int(M["m10"] / M["m00"])
     cy = int(M["m01"] / M["m00"])
     left_x = int(c[:, 0, 0].min())   # leftmost x of contour = pipe nose at entry
-    return (cx, cy), left_x
+    return (cx, cy), left_x, area
 
 
 # ── Single-video processing ────────────────────────────────────────────────────
@@ -417,7 +418,7 @@ def process_video(video_path, calib, debug=False, save_debug=False):
             x_search = x_tank_left + int(tank_w * 0.65)
         else:
             x_search = x_tank_right
-        nose, nose_left_x = find_nose(frame, first_frame, y_surface, y_bottom, x_tank_left, x_search)
+        nose, nose_left_x, nose_area = find_nose(frame, first_frame, y_surface, y_bottom, x_tank_left, x_search)
 
         should_break = False
 
@@ -433,17 +434,30 @@ def process_video(video_path, calib, debug=False, save_debug=False):
                     surface_zone_hits = 0
                     prev_zone_y = None
                 elif y_surface <= ny <= y_surface + 120:
-                    # Require 2 consecutive frames WITH descent between them:
-                    # a real entry drops ~30 px/frame, residual slosh bobs in place.
-                    if prev_zone_y is not None and ny >= prev_zone_y + 5:
-                        surface_zone_hits += 1
-                    else:
-                        surface_zone_hits = 1
-                    prev_zone_y = ny
-                    if surface_zone_hits >= 2:
+                    # Slosh-vs-entry discrimination (measured on this footage):
+                    # real entries appear as large deep blobs (area 4400-6900,
+                    # depth 87-101 px) — often for a single distinct frame,
+                    # because the footage duplicates frames and fast drops cross
+                    # the zone between distinct frames.  Slosh in the entry
+                    # window never exceeds area ~1550 or depth ~17 px.
+                    if nose_area >= 3000 and ny >= y_surface + 30:
                         x_entry = candidate_x
                         if debug:
-                            print(f"  f{frame_idx}: ACCEPTED (surface zone) cand={candidate_x} depth={ny - y_surface}px")
+                            print(f"  f{frame_idx}: ACCEPTED (large blob) x={candidate_x} "
+                                  f"depth={ny - y_surface}px area={int(nose_area)}")
+                    # Slower (30-degree) entries: 2 sightings with real descent.
+                    # Duplicated frames show ~0 descent — keep state, don't reset.
+                    elif prev_zone_y is None or ny < prev_zone_y - 5:
+                        surface_zone_hits = 1
+                        prev_zone_y = ny
+                    elif ny >= prev_zone_y + 5:
+                        surface_zone_hits += 1
+                        prev_zone_y = ny
+                        if surface_zone_hits >= 2:
+                            x_entry = candidate_x
+                            if debug:
+                                print(f"  f{frame_idx}: ACCEPTED (descent) x={candidate_x} "
+                                      f"depth={ny - y_surface}px")
                 elif last_nose is None or ny >= last_nose[1] + 12:
                     # Fallback: fast-moving detection deeper in tank
                     surface_zone_hits = 0
