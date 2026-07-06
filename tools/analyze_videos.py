@@ -576,7 +576,7 @@ def find_videos():
     for ext in ["*.mp4", "*.MP4", "*.mov", "*.MOV", "*.avi", "*.AVI"]:
         for v in glob.glob(ext):
             key = v.lower()
-            if key.startswith("debug_"):   # skip our own --save-debug outputs
+            if key.startswith(("debug_", "trace_")):  # skip our own overlay/trajectory outputs
                 continue
             if key not in seen:
                 seen.add(key)
