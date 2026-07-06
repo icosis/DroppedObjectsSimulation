@@ -15,6 +15,10 @@ import warnings
 import statistics
 import numpy as np
 
+# Force UTF-8 stdout so redirected output doesn't crash on arrow chars
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Set display backend BEFORE pyplot is imported, so DropTest's Agg call won't override it
 import matplotlib
 matplotlib.use("TkAgg")
