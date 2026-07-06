@@ -1,0 +1,8 @@
+{
+  "px_per_cm": 23.0,
+  "x_tank_left": 795,
+  "x_tank_right": 1671,
+  "y_surface_px": 607,
+  "y_bottom_px": 1009,
+  "note": "horizontal scale assumed equal to vertical scale (ruler)"
+}
