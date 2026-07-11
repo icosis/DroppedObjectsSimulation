@@ -39,6 +39,7 @@ from analyze_videos import (
     detect_water_surface, find_nose, MIN_AREA_PX,
     CALIBRATION_FILE, LABELS_FILE,
 )
+from measure_entry_angle import measure_entry_angle
 
 # Colour per ramp angle for the overlaid batch plot (matplotlib names)
 ANGLE_COLOR = {30: "tab:red", 45: "tab:green", 60: "tab:blue"}
@@ -50,11 +51,14 @@ RULER_BGR   = (255, 255, 255) # ruler ticks and labels
 DEBUG_WIN   = "Trajectory (q = quit)"
 
 
-def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm):
+def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm,
+                x_origin=None):
     """
     Draw cm rulers on the tank: a vertical ruler down the left wall (depth
-    below the surface) and a horizontal ruler along the floor (distance from
-    the left wall).  Ticks every 1 cm, numbered every 5 cm.
+    below the surface) and — once the entry point is known — a horizontal
+    ruler along the floor whose 0 sits at the entry x, so the label under the
+    pipe's resting spot reads its horizontal displacement directly.
+    Ticks every 1 cm, numbered every 5 cm.
     """
     h, w = disp.shape[:2]
     xr = x_right if x_right else w
@@ -72,15 +76,23 @@ def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm):
             cv2.putText(disp, str(d), (x_left + tick + 4, y + 5),
                         font, 0.45, RULER_BGR, 1, cv2.LINE_AA)
 
-    # Horizontal ruler: distance from the left wall, drawn along the floor
-    width_cm = int((xr - x_left) / px_per_cm)
-    cv2.line(disp, (x_left, y_bottom), (xr, y_bottom), RULER_BGR, 1)
+    # Horizontal ruler: displacement from the ENTRY point, along the floor.
+    # Only drawn once entry is known (x_origin set), so it appears in the
+    # video at the moment the pipe enters the water.
+    if x_origin is None:
+        return
+    width_cm = int((xr - x_origin) / px_per_cm)
+    cv2.line(disp, (int(x_origin), y_bottom), (xr, y_bottom), RULER_BGR, 1)
+    # Dashed drop-line from the entry point down to the ruler's zero
+    for y in range(y_surface, y_bottom, 14):
+        cv2.line(disp, (int(x_origin), y), (int(x_origin), min(y + 7, y_bottom)),
+                 RULER_BGR, 1)
     for d in range(0, width_cm + 1):
-        x = int(x_left + d * px_per_cm)
+        x = int(x_origin + d * px_per_cm)
         major = (d % 5 == 0)
         tick = 16 if major else 8
         cv2.line(disp, (x, y_bottom - tick), (x, y_bottom), RULER_BGR, 2 if major else 1)
-        if major and d > 0:
+        if major:
             cv2.putText(disp, str(d), (x - 8, y_bottom - tick - 6),
                         font, 0.45, RULER_BGR, 1, cv2.LINE_AA)
 
@@ -184,7 +196,23 @@ def load_calibration(explicit=None):
 
 # ── Core: record the underwater path ────────────────────────────────────────────
 
-def trace_video(video_path, calib, debug=False, video_out=None):
+def draw_entry_angle(disp, x0, y_surface, angle_deg):
+    """Short indicator line at the measured pipe-axis angle, pivoted on entry."""
+    if angle_deg is None:
+        return
+    arm = 90
+    dx = int(arm * np.cos(np.radians(angle_deg)))
+    dy = int(arm * np.sin(np.radians(angle_deg)))
+    # Line through the entry point along the pipe axis (nose down-right)
+    cv2.line(disp, (x0 - dx, y_surface - dy), (x0 + dx, y_surface + dy),
+             ENTRY_BGR, 2, cv2.LINE_AA)
+    cv2.putText(disp, f"entry {angle_deg:.1f} deg",
+                (x0 + dx + 8, y_surface + dy + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2, cv2.LINE_AA)
+
+
+def trace_video(video_path, calib, debug=False, video_out=None,
+                entry_angle=None, entry_frame=None, entry_anchor_x=None):
     """
     Walk the video, detect the cylinder centroid every frame, and record the
     path from water entry to floor contact.
@@ -392,13 +420,28 @@ def trace_video(video_path, calib, debug=False, video_out=None):
             disp = frame.copy()
             hh, ww = disp.shape[:2]
             cv2.line(disp, (0, y_surface), (ww, y_surface), ENTRY_BGR, 1)
-            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom, px_per_cm)
+            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
+                        px_per_cm, x_origin=(path_px[0][0] if path_px else None))
             if len(path_px) >= 2:
                 pts = smooth_px(path_px).reshape(-1, 1, 2)
                 cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
+            at_pierce = (entry_frame is not None and frame_idx >= entry_frame)
+            # The angle line stays pinned at the pierce anchor for the whole
+            # video — one line only, where the nose actually crossed the surface
+            angle_anchor = entry_anchor_x
             if path_px:
                 cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
                 cv2.circle(disp, tuple(path_px[-1]), 7, TRACE_BGR, -1)
+                if angle_anchor is None:
+                    angle_anchor = path_px[0][0]
+                draw_entry_angle(disp, angle_anchor, y_surface, entry_angle)
+            elif at_pierce and entry_anchor_x is not None:
+                # Pipe is piercing the surface but the trail hasn't started —
+                # anchor the axis line where the angle pass tracked the pipe
+                # (the raw underwater nose is unreliable this early: it may
+                # still be latched onto slosh elsewhere in the tank)
+                cv2.circle(disp, (entry_anchor_x, y_surface), 8, ENTRY_BGR, 2)
+                draw_entry_angle(disp, entry_anchor_x, y_surface, entry_angle)
             if nose:
                 cv2.circle(disp, nose, 5, (0, 255, 0), 1)   # raw detection
             cv2.putText(disp, f"frame {frame_idx}  pts={len(path_px)}", (8, 26),
@@ -407,11 +450,17 @@ def trace_video(video_path, calib, debug=False, video_out=None):
                 writer.write(disp)
             if debug:
                 cv2.imshow(DEBUG_WIN, disp)
-                # Pause on the first confirmed entry so you can see the lock-on
-                wait = 0 if (x_entry is not None and not entry_paused) else 40
-                if x_entry is not None:
+                # Pause on the surface-pierce frame (known from the entry-angle
+                # pass) so the centroid sits exactly on the surface line with no
+                # trail yet; fall back to the entry-confirmation frame if the
+                # angle pass failed.
+                if entry_frame is not None:
+                    pause_now = at_pierce and not entry_paused
+                else:
+                    pause_now = x_entry is not None and not entry_paused
+                if pause_now:
                     entry_paused = True
-                if cv2.waitKey(wait) & 0xFF == ord("q"):
+                if cv2.waitKey(0 if pause_now else 40) & 0xFF == ord("q"):
                     break
 
         if should_break:
@@ -425,10 +474,18 @@ def trace_video(video_path, calib, debug=False, video_out=None):
             pts = smooth_px(path_px).reshape(-1, 1, 2)
             cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
             cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
-            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom, px_per_cm)
+            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
+                        px_per_cm, x_origin=path_px[0][0])
             cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
-            for _ in range(int(max(1.0, fps / 3.0))):
+            draw_entry_angle(disp, entry_anchor_x if entry_anchor_x is not None
+                             else path_px[0][0], y_surface, entry_angle)
+            disp_cm = abs(path_px[-1][0] - path_px[0][0]) / px_per_cm
+            cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
+                        (8, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
+                        cv2.LINE_AA)
+            # Hold the annotated final frame for ~3s
+            for _ in range(int(max(1.0, fps))):
                 writer.write(disp)
         writer.release()
 
@@ -439,8 +496,16 @@ def trace_video(video_path, calib, debug=False, video_out=None):
             pts = smooth_px(path_px).reshape(-1, 1, 2)
             cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
             cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
+            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
+                        px_per_cm, x_origin=path_px[0][0])
             cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
+            draw_entry_angle(disp, entry_anchor_x if entry_anchor_x is not None
+                             else path_px[0][0], y_surface, entry_angle)
+            disp_cm = abs(path_px[-1][0] - path_px[0][0]) / px_per_cm
+            cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
+                        (8, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
+                        cv2.LINE_AA)
             cv2.putText(disp, f"DONE  {len(path_px)} points  press any key",
                         (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.imshow(DEBUG_WIN, disp)
@@ -461,6 +526,8 @@ def trace_video(video_path, calib, debug=False, video_out=None):
         "px_per_cm":    px_per_cm,
         "frame_img":    contact_frame_img,
         "x_contact_px": x_contact if x_contact is not None else (path_px[-1][0] if path_px else x_entry),
+        "entry_angle":  entry_angle,
+        "entry_anchor_x": entry_anchor_x,
     }
 
 
@@ -493,10 +560,21 @@ def save_trace_image(trace, out_path, calib=None):
     # Water surface line
     cv2.line(disp, (0, y_surf), (w, y_surf), ENTRY_BGR, 1)
 
-    # cm rulers on the tank walls
+    # cm rulers: depth on the left wall, displacement-from-entry on the floor
     if calib is not None:
+        origin = trace["path_px"][0][0] if trace["path_px"] else trace["x_entry_px"]
         draw_rulers(disp, calib.get("x_tank_left", 0), calib.get("x_tank_right"),
-                    y_surf, trace["y_bottom_px"], trace["px_per_cm"])
+                    y_surf, trace["y_bottom_px"], trace["px_per_cm"],
+                    x_origin=origin)
+        anchor = trace.get("entry_anchor_x")
+        draw_entry_angle(disp, anchor if anchor is not None else origin,
+                         y_surf, trace.get("entry_angle"))
+    if len(trace["path_px"]) >= 2:
+        disp_cm = (abs(trace["path_px"][-1][0] - trace["path_px"][0][0])
+                   / trace["px_per_cm"])
+        cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
+                    (8, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
+                    cv2.LINE_AA)
 
     # Smoothed curve as the path; raw measured centroids kept as small dots
     if len(trace["path_px"]) >= 2:
@@ -620,9 +698,19 @@ def main():
         print(f"\nTracing {args.video} ...")
         base = os.path.splitext(os.path.basename(args.video))[0]
 
+        # Measure the pipe-axis entry angle first so it can be overlaid
+        angle_res = measure_entry_angle(args.video, calib, ramp_deg=args.ramp)
+        entry_angle  = angle_res["angle_deg"]    if angle_res else None
+        entry_frame  = angle_res["frame"]        if angle_res else None
+        entry_anchor = angle_res.get("x_px")     if angle_res else None
+        if entry_angle is not None:
+            print(f"  Entry angle: {entry_angle:.1f} deg (frame {entry_frame})")
+
         # ── Debug: live window only, save nothing ──────────────────────────────
         if args.debug:
-            trace = trace_video(args.video, calib, debug=True)
+            trace = trace_video(args.video, calib, debug=True,
+                                entry_angle=entry_angle, entry_frame=entry_frame,
+                                entry_anchor_x=entry_anchor)
             if trace is None:
                 sys.exit("Could not trace this video.")
             p = trace["path_px"]
@@ -631,7 +719,9 @@ def main():
             return
 
         video_out = None if args.no_video else f"trace_{base}.mp4"
-        trace = trace_video(args.video, calib, video_out=video_out)
+        trace = trace_video(args.video, calib, video_out=video_out,
+                            entry_angle=entry_angle, entry_frame=entry_frame,
+                            entry_anchor_x=entry_anchor)
         if trace is None:
             sys.exit("Could not trace this video.")
         p = trace["path_px"]

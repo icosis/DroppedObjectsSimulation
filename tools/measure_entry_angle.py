@@ -188,6 +188,7 @@ def measure_entry_angle(video_path, calib, ramp_deg=None, debug=False):
     frame_idx    = 10
     entry_angle  = None
     entry_frame  = None
+    entry_x      = None
 
     last_above_frame   = None
     last_above_contour = None
@@ -264,6 +265,10 @@ def measure_entry_angle(video_path, calib, ramp_deg=None, debug=False):
                 display_contour = last_above_contour if last_above_contour is not None else c
                 entry_angle     = last_above_angle   if last_above_angle   is not None else fit_angle(c)
                 entry_frame     = frame_idx
+                # Pierce anchor = bottom-most point of the CURRENT contour —
+                # the nose tip at the surface (the centroid sits up-ramp of it)
+                bi      = int(c[:, 0, 1].argmax())
+                entry_x = int(c[bi, 0, 0])
 
                 if debug:
                     lbl  = "ENTRY — press any key" if last_above_frame is not None else "ENTRY (fallback) — press any key"
@@ -302,6 +307,7 @@ def measure_entry_angle(video_path, calib, ramp_deg=None, debug=False):
     return {
         "angle_deg":   round(entry_angle, 1),
         "frame":       entry_frame,
+        "x_px":        entry_x,
     }
 
 
