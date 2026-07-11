@@ -46,7 +46,43 @@ ANGLE_COLOR = {30: "tab:red", 45: "tab:green", 60: "tab:blue"}
 TRACE_BGR   = (0, 165, 255)   # orange path
 ENTRY_BGR   = (0, 255, 255)   # yellow entry marker
 CONTACT_BGR = (0, 80, 255)    # red contact marker
+RULER_BGR   = (255, 255, 255) # ruler ticks and labels
 DEBUG_WIN   = "Trajectory (q = quit)"
+
+
+def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm):
+    """
+    Draw cm rulers on the tank: a vertical ruler down the left wall (depth
+    below the surface) and a horizontal ruler along the floor (distance from
+    the left wall).  Ticks every 1 cm, numbered every 5 cm.
+    """
+    h, w = disp.shape[:2]
+    xr = x_right if x_right else w
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    # Vertical ruler: depth below surface, drawn just inside the left wall
+    depth_cm = int((y_bottom - y_surface) / px_per_cm)
+    cv2.line(disp, (x_left, y_surface), (x_left, y_bottom), RULER_BGR, 1)
+    for d in range(0, depth_cm + 1):
+        y = int(y_surface + d * px_per_cm)
+        major = (d % 5 == 0)
+        tick = 16 if major else 8
+        cv2.line(disp, (x_left, y), (x_left + tick, y), RULER_BGR, 2 if major else 1)
+        if major and d > 0:
+            cv2.putText(disp, str(d), (x_left + tick + 4, y + 5),
+                        font, 0.45, RULER_BGR, 1, cv2.LINE_AA)
+
+    # Horizontal ruler: distance from the left wall, drawn along the floor
+    width_cm = int((xr - x_left) / px_per_cm)
+    cv2.line(disp, (x_left, y_bottom), (xr, y_bottom), RULER_BGR, 1)
+    for d in range(0, width_cm + 1):
+        x = int(x_left + d * px_per_cm)
+        major = (d % 5 == 0)
+        tick = 16 if major else 8
+        cv2.line(disp, (x, y_bottom - tick), (x, y_bottom), RULER_BGR, 2 if major else 1)
+        if major and d > 0:
+            cv2.putText(disp, str(d), (x - 8, y_bottom - tick - 6),
+                        font, 0.45, RULER_BGR, 1, cv2.LINE_AA)
 
 
 # The global/canonical calibration lives in the project's data/ folder, next to
@@ -356,6 +392,7 @@ def trace_video(video_path, calib, debug=False, video_out=None):
             disp = frame.copy()
             hh, ww = disp.shape[:2]
             cv2.line(disp, (0, y_surface), (ww, y_surface), ENTRY_BGR, 1)
+            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom, px_per_cm)
             if len(path_px) >= 2:
                 pts = smooth_px(path_px).reshape(-1, 1, 2)
                 cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
@@ -388,6 +425,7 @@ def trace_video(video_path, calib, debug=False, video_out=None):
             pts = smooth_px(path_px).reshape(-1, 1, 2)
             cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
             cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
+            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom, px_per_cm)
             cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
             for _ in range(int(max(1.0, fps / 3.0))):
@@ -447,13 +485,18 @@ BOUNCE_LIMIT_CM = 2.0   # exclude batch trajectories that rebound more than this
 
 # ── Output 1: trace drawn on the frame ──────────────────────────────────────────
 
-def save_trace_image(trace, out_path):
+def save_trace_image(trace, out_path, calib=None):
     disp = trace["frame_img"].copy()
     h, w = disp.shape[:2]
     y_surf = trace["y_surface_px"]
 
     # Water surface line
     cv2.line(disp, (0, y_surf), (w, y_surf), ENTRY_BGR, 1)
+
+    # cm rulers on the tank walls
+    if calib is not None:
+        draw_rulers(disp, calib.get("x_tank_left", 0), calib.get("x_tank_right"),
+                    y_surf, trace["y_bottom_px"], trace["px_per_cm"])
 
     # Smoothed curve as the path; raw measured centroids kept as small dots
     if len(trace["path_px"]) >= 2:
@@ -596,7 +639,7 @@ def main():
         depth_cm = (trace["y_bottom_px"] - trace["y_surface_px"]) / trace["px_per_cm"]
         print(f"  Path points: {len(trace['path_px'])}   "
               f"displacement: {disp_cm:.2f} cm   tank depth: {depth_cm:.1f} cm")
-        save_trace_image(trace, f"trace_{base}.png")
+        save_trace_image(trace, f"trace_{base}.png", calib=calib)
         title = f"{base}" + (f"  (ramp {args.ramp}°)" if args.ramp else "")
         save_single_plot(trace, f"traj_{base}.png", title=title)
         if video_out and os.path.exists(video_out):
