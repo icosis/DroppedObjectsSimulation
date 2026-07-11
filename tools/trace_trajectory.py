@@ -51,6 +51,13 @@ RULER_BGR   = (255, 255, 255) # ruler ticks and labels
 DEBUG_WIN   = "Trajectory (q = quit)"
 
 
+def dashed_vline(disp, x, y0, y1, color=RULER_BGR, dash=7, gap=7, thickness=1):
+    """Vertical dashed line from y0 down to y1."""
+    for y in range(int(y0), int(y1), dash + gap):
+        cv2.line(disp, (int(x), y), (int(x), min(y + dash, int(y1))),
+                 color, thickness)
+
+
 def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm,
                 x_origin=None):
     """
@@ -84,17 +91,20 @@ def draw_rulers(disp, x_left, x_right, y_surface, y_bottom, px_per_cm,
     width_cm = int((xr - x_origin) / px_per_cm)
     cv2.line(disp, (int(x_origin), y_bottom), (xr, y_bottom), RULER_BGR, 1)
     # Dashed drop-line from the entry point down to the ruler's zero
-    for y in range(y_surface, y_bottom, 14):
-        cv2.line(disp, (int(x_origin), y), (int(x_origin), min(y + 7, y_bottom)),
-                 RULER_BGR, 1)
-    for d in range(0, width_cm + 1):
+    dashed_vline(disp, x_origin, y_surface, y_bottom)
+    # Ticks: 0.5 cm minor, 1 cm medium, 5 cm major with labels
+    for half in range(0, width_cm * 2 + 1):
+        d = half / 2.0
         x = int(x_origin + d * px_per_cm)
-        major = (d % 5 == 0)
-        tick = 16 if major else 8
-        cv2.line(disp, (x, y_bottom - tick), (x, y_bottom), RULER_BGR, 2 if major else 1)
-        if major:
-            cv2.putText(disp, str(d), (x - 8, y_bottom - tick - 6),
+        if half % 10 == 0:            # 5 cm — major, labelled
+            tick, thick = 16, 2
+            cv2.putText(disp, str(int(d)), (x - 8, y_bottom - tick - 6),
                         font, 0.45, RULER_BGR, 1, cv2.LINE_AA)
+        elif half % 2 == 0:           # 1 cm — medium
+            tick, thick = 9, 1
+        else:                         # 0.5 cm — minor
+            tick, thick = 5, 1
+        cv2.line(disp, (x, y_bottom - tick), (x, y_bottom), RULER_BGR, thick)
 
 
 # The global/canonical calibration lives in the project's data/ folder, next to
@@ -432,6 +442,10 @@ def trace_video(video_path, calib, debug=False, video_out=None,
             if path_px:
                 cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
                 cv2.circle(disp, tuple(path_px[-1]), 7, TRACE_BGR, -1)
+                # Drop-line from the current centroid to the floor ruler so
+                # the running displacement can be read directly off the ticks
+                dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
+                             color=TRACE_BGR)
                 if angle_anchor is None:
                     angle_anchor = path_px[0][0]
                 draw_entry_angle(disp, angle_anchor, y_surface, entry_angle)
@@ -478,12 +492,14 @@ def trace_video(video_path, calib, debug=False, video_out=None,
                         px_per_cm, x_origin=path_px[0][0])
             cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
+            dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
+                         color=TRACE_BGR)
             draw_entry_angle(disp, entry_anchor_x if entry_anchor_x is not None
                              else path_px[0][0], y_surface, entry_angle)
             disp_cm = abs(path_px[-1][0] - path_px[0][0]) / px_per_cm
-            cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
-                        (8, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
-                        cv2.LINE_AA)
+            cv2.putText(disp, f"{disp_cm:.2f} cm",
+                        (path_px[-1][0] + 16, path_px[-1][1] - 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
             # Hold the annotated final frame for ~3s
             for _ in range(int(max(1.0, fps))):
                 writer.write(disp)
@@ -500,12 +516,14 @@ def trace_video(video_path, calib, debug=False, video_out=None,
                         px_per_cm, x_origin=path_px[0][0])
             cv2.circle(disp, (path_px[0][0], y_surface), 8, ENTRY_BGR, 2)
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
+            dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
+                         color=TRACE_BGR)
             draw_entry_angle(disp, entry_anchor_x if entry_anchor_x is not None
                              else path_px[0][0], y_surface, entry_angle)
             disp_cm = abs(path_px[-1][0] - path_px[0][0]) / px_per_cm
-            cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
-                        (8, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
-                        cv2.LINE_AA)
+            cv2.putText(disp, f"{disp_cm:.2f} cm",
+                        (path_px[-1][0] + 16, path_px[-1][1] - 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
             cv2.putText(disp, f"DONE  {len(path_px)} points  press any key",
                         (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.imshow(DEBUG_WIN, disp)
@@ -570,11 +588,12 @@ def save_trace_image(trace, out_path, calib=None):
         draw_entry_angle(disp, anchor if anchor is not None else origin,
                          y_surf, trace.get("entry_angle"))
     if len(trace["path_px"]) >= 2:
-        disp_cm = (abs(trace["path_px"][-1][0] - trace["path_px"][0][0])
-                   / trace["px_per_cm"])
-        cv2.putText(disp, f"horizontal displacement: {disp_cm:.2f} cm",
-                    (8, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2,
-                    cv2.LINE_AA)
+        lastp = trace["path_px"][-1]
+        dashed_vline(disp, lastp[0], lastp[1], trace["y_bottom_px"],
+                     color=TRACE_BGR)
+        disp_cm = (abs(lastp[0] - trace["path_px"][0][0]) / trace["px_per_cm"])
+        cv2.putText(disp, f"{disp_cm:.2f} cm", (lastp[0] + 16, lastp[1] - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
 
     # Smoothed curve as the path; raw measured centroids kept as small dots
     if len(trace["path_px"]) >= 2:
