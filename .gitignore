@@ -14,7 +14,8 @@ __pycache__/
 *.pyo
 .env
 
-# Google OAuth tokens
+# Google OAuth secrets
+credentials.json
 token.json
 
 # OS
