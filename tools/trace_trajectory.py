@@ -48,6 +48,7 @@ TRACE_BGR   = (0, 165, 255)   # orange path
 ENTRY_BGR   = (0, 255, 255)   # yellow entry marker
 CONTACT_BGR = (0, 80, 255)    # red contact marker
 RULER_BGR   = (255, 255, 255) # ruler ticks and labels
+LAND_BGR    = (0, 210, 0)     # projected straight-line landing marker
 DEBUG_WIN   = "Trajectory (q = quit)"
 
 
@@ -248,10 +249,10 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None):
         return
     dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
                    ENTRY_BGR, thickness=2)
-    cv2.circle(disp, (x_land, y_bottom), 8, ENTRY_BGR, 2)
+    cv2.circle(disp, (x_land, y_bottom), 9, LAND_BGR, -1)
     cv2.putText(disp, "straight-line landing",
                 (x_land + 12, y_bottom - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, ENTRY_BGR, 2, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, LAND_BGR, 2, cv2.LINE_AA)
 
 
 def trace_video(video_path, calib, debug=False, video_out=None,
@@ -646,7 +647,7 @@ def save_trace_image(trace, out_path, calib=None):
         entry_x = trace["path_px"][0][0] if trace["path_px"] else trace["x_entry_px"]
     cv2.circle(disp, (entry_x, y_surf), 8, ENTRY_BGR, 2)
     if trace["path_px"]:
-        cv2.circle(disp, tuple(trace["path_px"][-1]), 8, CONTACT_BGR, 2)
+        cv2.circle(disp, tuple(trace["path_px"][-1]), 9, CONTACT_BGR, -1)
 
     cv2.putText(disp, "entry", (entry_x + 10, y_surf - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2)
