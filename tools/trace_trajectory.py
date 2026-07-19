@@ -206,8 +206,28 @@ def load_calibration(explicit=None):
 
 # ── Core: record the underwater path ────────────────────────────────────────────
 
-def draw_entry_angle(disp, x0, y_surface, angle_deg):
-    """Short indicator line at the measured pipe-axis angle, pivoted on entry."""
+def dashed_segment(disp, p0, p1, color, dash=10, gap=8, thickness=1):
+    """Dashed straight line between two arbitrary points."""
+    x0, y0 = float(p0[0]), float(p0[1])
+    x1, y1 = float(p1[0]), float(p1[1])
+    length = max(1.0, np.hypot(x1 - x0, y1 - y0))
+    ux, uy = (x1 - x0) / length, (y1 - y0) / length
+    s = 0.0
+    while s < length:
+        e = min(s + dash, length)
+        cv2.line(disp, (int(x0 + ux * s), int(y0 + uy * s)),
+                 (int(x0 + ux * e), int(y0 + uy * e)), color, thickness,
+                 cv2.LINE_AA)
+        s = e + gap
+
+
+def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None):
+    """
+    Short indicator line at the measured pipe-axis angle, pivoted on entry.
+    If y_bottom is given, the line is extended (dashed) to the tank floor and
+    the straight-line landing point — where the pipe would land with no
+    hydrodynamic deflection — is marked.
+    """
     if angle_deg is None:
         return
     arm = 90
@@ -219,6 +239,19 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg):
     cv2.putText(disp, f"entry {angle_deg:.1f} deg",
                 (x0 + dx + 8, y_surface + dy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2, cv2.LINE_AA)
+
+    # Straight-line projection to the floor: expected landing with no water
+    if y_bottom is None or angle_deg <= 5:
+        return
+    x_land = int(x0 + (y_bottom - y_surface) / np.tan(np.radians(angle_deg)))
+    if not (0 <= x_land < disp.shape[1]):
+        return
+    dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
+                   ENTRY_BGR, thickness=2)
+    cv2.circle(disp, (x_land, y_bottom), 8, ENTRY_BGR, 2)
+    cv2.putText(disp, "straight-line landing",
+                (x_land + 12, y_bottom - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, ENTRY_BGR, 2, cv2.LINE_AA)
 
 
 def trace_video(video_path, calib, debug=False, video_out=None,
@@ -452,14 +485,14 @@ def trace_video(video_path, calib, debug=False, video_out=None,
                 # the running displacement can be read directly off the ticks
                 dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
                              color=TRACE_BGR)
-                draw_entry_angle(disp, angle_anchor, y_surface, entry_angle)
+                draw_entry_angle(disp, angle_anchor, y_surface, entry_angle, y_bottom)
             elif at_pierce and entry_anchor_x is not None:
                 # Pipe is piercing the surface but the trail hasn't started —
                 # anchor the axis line where the angle pass tracked the pipe
                 # (the raw underwater nose is unreliable this early: it may
                 # still be latched onto slosh elsewhere in the tank)
                 cv2.circle(disp, (entry_anchor_x, y_surface), 8, ENTRY_BGR, 2)
-                draw_entry_angle(disp, entry_anchor_x, y_surface, entry_angle)
+                draw_entry_angle(disp, entry_anchor_x, y_surface, entry_angle, y_bottom)
             if nose:
                 cv2.circle(disp, nose, 5, (0, 255, 0), 1)   # raw detection
             cv2.putText(disp, f"frame {frame_idx}  pts={len(path_px)}", (8, 26),
@@ -499,7 +532,7 @@ def trace_video(video_path, calib, debug=False, video_out=None,
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
             dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
                          color=TRACE_BGR)
-            draw_entry_angle(disp, anchor, y_surface, entry_angle)
+            draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom)
             disp_cm = abs(path_px[-1][0] - x_entry) / px_per_cm
             cv2.putText(disp, f"{disp_cm:.2f} cm",
                         (path_px[-1][0] + 16, path_px[-1][1] - 14),
@@ -523,7 +556,7 @@ def trace_video(video_path, calib, debug=False, video_out=None,
             cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
             dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
                          color=TRACE_BGR)
-            draw_entry_angle(disp, anchor, y_surface, entry_angle)
+            draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom)
             disp_cm = abs(path_px[-1][0] - x_entry) / px_per_cm
             cv2.putText(disp, f"{disp_cm:.2f} cm",
                         (path_px[-1][0] + 16, path_px[-1][1] - 14),
@@ -590,7 +623,8 @@ def save_trace_image(trace, out_path, calib=None):
                     x_origin=origin)
         anchor = trace.get("entry_anchor_x")
         draw_entry_angle(disp, anchor if anchor is not None else origin,
-                         y_surf, trace.get("entry_angle"))
+                         y_surf, trace.get("entry_angle"),
+                         y_bottom=trace["y_bottom_px"])
     if len(trace["path_px"]) >= 2:
         lastp = trace["path_px"][-1]
         dashed_vline(disp, lastp[0], lastp[1], trace["y_bottom_px"],
