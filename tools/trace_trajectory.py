@@ -50,6 +50,7 @@ CONTACT_BGR = (0, 80, 255)    # red contact marker
 RULER_BGR   = (255, 255, 255) # ruler ticks and labels
 LAND_BGR    = (0, 210, 0)     # projected straight-line landing marker
 HALF_LENGTH_CM = 7.62 / 2.0   # pipe half-length: CoM sits this far up-axis of the nose
+COM_BGR     = (255, 120, 0)   # centre-of-mass marker (blue)
 DEBUG_WIN   = "Trajectory (q = quit)"
 
 
@@ -242,6 +243,16 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
     cv2.putText(disp, f"entry {angle_deg:.1f} deg",
                 (x0 + dx + 8, y_surface + dy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2, cv2.LINE_AA)
+
+    # Centre of mass at the pierce instant: half a pipe length up-axis
+    if px_per_cm:
+        d   = HALF_LENGTH_CM * px_per_cm
+        cxp = int(x0 - d * np.cos(np.radians(angle_deg)))
+        cyp = int(y_surface - d * np.sin(np.radians(angle_deg)))
+        cv2.circle(disp, (cxp, cyp), 7, COM_BGR, -1)
+        cv2.circle(disp, (cxp, cyp), 7, (255, 255, 255), 1)
+        cv2.putText(disp, "CoM", (cxp - 52, cyp + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, COM_BGR, 2, cv2.LINE_AA)
 
     # Straight-line projection to the floor: expected landing with no water
     if y_bottom is None or angle_deg <= 5:
