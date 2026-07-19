@@ -31,7 +31,7 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore")          # suppress DropTest's Agg override warning
     from DropTest import simulate_drop
 
-RESULTS_CSV = "results.csv"
+RESULTS_CSV = "results_com.csv"
 
 # Run the physics model fresh — no experimental data used here
 SIM = {a: simulate_drop(a)["displacement_cm"] for a in [30, 45, 60]}
@@ -46,15 +46,16 @@ valid = {a: [] for a in ANGLES}
 
 with open(RESULTS_CSV) as f:
     for row in csv.DictReader(f):
-        if row["displacement_cm"] == "ERROR":
+        if row["displacement_com_cm"] == "ERROR":
             continue
         angle = int(row["angle_deg"])
-        disp  = float(row["displacement_cm"])
+        disp  = float(row["displacement_com_cm"])
+        raw   = float(row["displacement_raw_cm"])
         xe    = int(row["x_entry_px"])
         xc    = int(row["x_contact_px"])
         if xc < xe:    # pipe moved backward — bad read
             continue
-        if disp > 25:  # safety net: physically implausible displacement
+        if raw > 25:   # safety net: physically implausible displacement
             continue
         if xe < 920:   # safety net: left-wall ripple false positive
             continue
@@ -63,7 +64,7 @@ with open(RESULTS_CSV) as f:
 # ── Figure ─────────────────────────────────────────────────────────────────────
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 fig.suptitle(
-    "Horizontal Displacement of Steel Pipe vs Drop Angle",
+    "Centre-of-Mass Horizontal Displacement of Steel Pipe vs Drop Angle",
     fontsize=14, fontweight="bold"
 )
 
@@ -94,7 +95,7 @@ for bar, val in zip(bars_sim, sim_vals):
 ax1.set_xticks(idx)
 ax1.set_xticklabels(["30°", "45°", "60°"], fontsize=12)
 ax1.set_xlabel("Drop Angle", fontsize=12)
-ax1.set_ylabel("Horizontal Displacement (cm)", fontsize=12)
+ax1.set_ylabel("CoM Horizontal Displacement (cm)", fontsize=12)
 ax1.set_title("Mean Experimental vs Simulation", fontsize=12)
 ax1.set_ylim(0, 30)
 ax1.grid(axis="y", alpha=0.3)
@@ -129,7 +130,7 @@ for i, a in enumerate(ANGLES, 1):
     ax2.text(i + 0.45, SIM[a], f"sim {a}°", va="center",
              fontsize=8, color=COLORS[a])
 
-ax2.set_ylabel("Horizontal Displacement (cm)", fontsize=12)
+ax2.set_ylabel("CoM Horizontal Displacement (cm)", fontsize=12)
 ax2.set_title("Distribution per Angle — verified detections only\n(dashed = simulation)", fontsize=12)
 ax2.set_ylim(0, 30)
 ax2.grid(axis="y", alpha=0.3)

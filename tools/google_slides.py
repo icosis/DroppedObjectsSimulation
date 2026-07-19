@@ -44,10 +44,15 @@ def get_service():
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                # Test-mode refresh tokens expire after ~7 days — re-authorize
+                creds = None
+        if not creds or not creds.valid:
             if not os.path.exists(CREDENTIALS_FILE):
                 sys.exit(f"credentials.json not found at {CREDENTIALS_FILE}")
+            print("Google token expired — a browser window will open to re-authorize.")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
         with open(TOKEN_FILE, "w") as f:

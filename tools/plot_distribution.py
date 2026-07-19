@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-RESULTS_CSV = "results.csv"
+RESULTS_CSV = "results_com.csv"
 OUT_PATH    = "displacement_scatter.png"
 
 COLORS = {30: "#2F6FB8", 45: "#C77F1B", 60: "#B5384B"}
@@ -31,13 +31,14 @@ ANGLES = [30, 45, 60]
 valid = {a: [] for a in ANGLES}
 with open(RESULTS_CSV) as f:
     for row in csv.DictReader(f):
-        if row["displacement_cm"] == "ERROR":
+        if row["displacement_com_cm"] == "ERROR":
             continue
         angle = int(row["angle_deg"])
-        disp  = float(row["displacement_cm"])
+        disp  = float(row["displacement_com_cm"])
+        raw   = float(row["displacement_raw_cm"])
         xe    = int(row["x_entry_px"])
         xc    = int(row["x_contact_px"])
-        if xc < xe or disp > 25 or xe < 920:
+        if xc < xe or raw > 25 or xe < 920:
             continue
         valid[angle].append(disp)
 
@@ -75,10 +76,10 @@ for i, a in enumerate(ANGLES, 1):
             color="#444444")
 
 ax.set_xlabel("Drop Angle", fontsize=13)
-ax.set_ylabel("Horizontal Displacement (cm)", fontsize=13)
-ax.set_title("Horizontal Displacement per Drop Angle — all valid trials",
+ax.set_ylabel("CoM Horizontal Displacement (cm)", fontsize=13)
+ax.set_title("Centre-of-Mass Displacement per Drop Angle — all valid trials",
              fontsize=13)
-ax.set_ylim(0, 16)
+ax.set_ylim(0, 20)
 ax.grid(axis="y", alpha=0.3, linestyle=":")
 ax.tick_params(labelsize=12)
 for spine in ("top", "right"):
