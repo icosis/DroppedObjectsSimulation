@@ -244,15 +244,6 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
                 (x0 + dx + 8, y_surface + dy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2, cv2.LINE_AA)
 
-    # Centre of mass at the pierce instant: half a pipe length up-axis
-    if px_per_cm:
-        d   = HALF_LENGTH_CM * px_per_cm
-        cxp = int(x0 - d * np.cos(np.radians(angle_deg)))
-        cyp = int(y_surface - d * np.sin(np.radians(angle_deg)))
-        cv2.circle(disp, (cxp, cyp), 7, COM_BGR, -1)
-        cv2.circle(disp, (cxp, cyp), 7, (255, 255, 255), 1)
-        cv2.putText(disp, "CoM", (cxp - 52, cyp + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, COM_BGR, 2, cv2.LINE_AA)
 
     # Straight-line projection to the floor: expected landing with no water
     if y_bottom is None or angle_deg <= 5:
@@ -263,6 +254,16 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
     dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
                    ENTRY_BGR, thickness=2)
     cv2.circle(disp, (x_land, y_bottom), 9, LAND_BGR, -1)
+    if px_per_cm:
+        d  = HALF_LENGTH_CM * px_per_cm
+        bx = int(x_land - d * np.cos(np.radians(angle_deg)))
+        by = int(y_bottom - d * np.sin(np.radians(angle_deg)))
+        cv2.circle(disp, (bx, by), 10, COM_BGR, -1)
+        cv2.circle(disp, (bx, by), 10, (255, 255, 255), 2)
+        ref_b = x_ref if x_ref is not None else x0
+        cv2.putText(disp, f"expected CoM {(bx - ref_b) / px_per_cm:.2f} cm",
+                    (bx + 16, by + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, COM_BGR, 2, cv2.LINE_AA)
     if px_per_cm:
         ref = x_ref if x_ref is not None else x0
         cv2.putText(disp, f"{(x_land - ref) / px_per_cm:.2f} cm",
