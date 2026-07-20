@@ -36,7 +36,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(__file__))
 from analyze_videos import (
-    detect_water_surface, find_nose, MIN_AREA_PX,
+    detect_water_surface, find_nose, MIN_AREA_PX, THRESHOLD,
     CALIBRATION_FILE, LABELS_FILE,
 )
 from measure_entry_angle import measure_entry_angle
@@ -253,15 +253,41 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
     dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
                    ENTRY_BGR, thickness=2)
     if px_per_cm:
-        # The CoM travels along this axis line; with no water it reaches floor
-        # depth exactly at the line/floor intersection — that IS the expected
-        # CoM landing (no L/2 offset, since the reference is the surface crossing).
+        # The nose (front end) travels along this axis line; with no water it
+        # reaches floor depth exactly at the line/floor intersection — the
+        # expected front-end landing, comparable to the actual front end.
         cv2.circle(disp, (x_land, y_bottom), 10, COM_BGR, -1)
         cv2.circle(disp, (x_land, y_bottom), 10, (255, 255, 255), 2)
         ref_b = x_ref if x_ref is not None else x0
-        cv2.putText(disp, f"Expected CoM {(x_land - ref_b) / px_per_cm:.2f} cm",
+        cv2.putText(disp, f"Expected {(x_land - ref_b) / px_per_cm:.2f} cm",
                     (x_land + 16, y_bottom - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, COM_BGR, 2, cv2.LINE_AA)
+
+
+def front_end_point(frame, first_frame, y_surface, y_bottom, x_left, x_right):
+    """
+    Rightmost point of the largest moving contour — the pipe's LEADING (front)
+    end in the direction of travel.  Used at the contact frame so displacement
+    is measured front-end-to-front-end (nose pierce -> leading tip at floor).
+    Returns (x, y) or None.
+    """
+    diff = cv2.absdiff(frame, first_frame)
+    gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, THRESHOLD, 255, cv2.THRESH_BINARY)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k)
+    xr = x_right if x_right else mask.shape[1]
+    roi = np.zeros_like(mask)
+    roi[y_surface:y_bottom, x_left:xr] = mask[y_surface:y_bottom, x_left:xr]
+    contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    c = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(c) < MIN_AREA_PX:
+        return None
+    idx = int(c[:, 0, 0].argmax())          # rightmost = leading edge
+    return (int(c[idx, 0, 0]), int(c[idx, 0, 1]))
 
 
 def trace_video(video_path, calib, debug=False, video_out=None,
@@ -542,51 +568,46 @@ def trace_video(video_path, calib, debug=False, video_out=None,
             break
 
     cap.release()
+
+    # Front (leading) end of the pipe at contact — the measurement endpoint.
+    front_end = None
+    if path_px:
+        fe = front_end_point(contact_frame_img, first_frame, y_surface, y_bottom,
+                             x_tank_left, x_tank_right)
+        front_end = fe if fe is not None else tuple(path_px[-1])
+
+    def _draw_final(disp):
+        """Draw the completed front-to-front annotation onto disp."""
+        pts = smooth_px(path_px).reshape(-1, 1, 2)
+        cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
+        cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
+        anchor = entry_anchor_x if entry_anchor_x is not None else path_px[0][0]
+        draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
+                    px_per_cm, x_origin=int(anchor))
+        cv2.circle(disp, (anchor, y_surface), 8, ENTRY_BGR, 2)
+        # Connector from the centroid trail end to the leading tip, then the
+        # red contact marker at the leading tip
+        cv2.line(disp, tuple(path_px[-1]), front_end, TRACE_BGR, 2, cv2.LINE_AA)
+        cv2.circle(disp, front_end, 9, CONTACT_BGR, -1)
+        dashed_vline(disp, front_end[0], front_end[1], y_bottom, color=TRACE_BGR)
+        draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom,
+                         px_per_cm, x_ref=anchor)
+        disp_cm = abs(front_end[0] - anchor) / px_per_cm
+        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, front_end[1] - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
+
     if writer is not None:
-        # Hold the final traced frame for ~1s so the completed path is visible
         if path_px:
             disp = contact_frame_img.copy()
-            pts = smooth_px(path_px).reshape(-1, 1, 2)
-            cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
-            cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
-            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
-                        px_per_cm, x_origin=int(path_px[0][0] - com_offset_px))
-            anchor = entry_anchor_x if entry_anchor_x is not None else path_px[0][0]
-            cv2.circle(disp, (anchor, y_surface), 8, ENTRY_BGR, 2)
-            cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
-            dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
-                         color=TRACE_BGR)
-            draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom,
-                             px_per_cm, x_ref=anchor - com_offset_px)
-            disp_cm = abs(path_px[-1][0] - x_entry) / px_per_cm + com_offset_cm
-            cv2.putText(disp, f"{disp_cm:.2f} cm",
-                        (path_px[-1][0] + 16, path_px[-1][1] - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
-            # Hold the annotated final frame for ~3s
-            for _ in range(int(max(1.0, fps))):
+            _draw_final(disp)
+            for _ in range(int(max(1.0, fps))):     # hold the final frame ~1s
                 writer.write(disp)
         writer.release()
 
     if debug:
-        # Hold the completed trajectory until a key is pressed
         if path_px:
             disp = contact_frame_img.copy()
-            pts = smooth_px(path_px).reshape(-1, 1, 2)
-            cv2.polylines(disp, [pts], False, TRACE_BGR, 2, cv2.LINE_AA)
-            cv2.line(disp, (0, y_surface), (disp.shape[1], y_surface), ENTRY_BGR, 1)
-            draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
-                        px_per_cm, x_origin=int(path_px[0][0] - com_offset_px))
-            anchor = entry_anchor_x if entry_anchor_x is not None else path_px[0][0]
-            cv2.circle(disp, (anchor, y_surface), 8, ENTRY_BGR, 2)
-            cv2.circle(disp, tuple(path_px[-1]), 9, CONTACT_BGR, -1)
-            dashed_vline(disp, path_px[-1][0], path_px[-1][1], y_bottom,
-                         color=TRACE_BGR)
-            draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom,
-                             px_per_cm, x_ref=anchor - com_offset_px)
-            disp_cm = abs(path_px[-1][0] - x_entry) / px_per_cm + com_offset_cm
-            cv2.putText(disp, f"{disp_cm:.2f} cm",
-                        (path_px[-1][0] + 16, path_px[-1][1] - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
+            _draw_final(disp)
             cv2.putText(disp, f"DONE  {len(path_px)} points  press any key",
                         (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.imshow(DEBUG_WIN, disp)
@@ -609,6 +630,7 @@ def trace_video(video_path, calib, debug=False, video_out=None,
         "x_contact_px": x_contact if x_contact is not None else (path_px[-1][0] if path_px else x_entry),
         "entry_angle":  entry_angle,
         "entry_anchor_x": entry_anchor_x,
+        "front_end_px": front_end,
     }
 
 
@@ -655,13 +677,17 @@ def save_trace_image(trace, out_path, calib=None):
                          y_bottom=trace["y_bottom_px"],
                          px_per_cm=trace["px_per_cm"],
                          x_ref=pivot)
+    # Front (leading) end of the pipe at contact = measurement endpoint
+    front_end = trace.get("front_end_px")
+    if front_end is None and trace["path_px"]:
+        front_end = tuple(trace["path_px"][-1])
+
     if len(trace["path_px"]) >= 2:
-        lastp = trace["path_px"][-1]
-        dashed_vline(disp, lastp[0], lastp[1], trace["y_bottom_px"],
+        dashed_vline(disp, front_end[0], front_end[1], trace["y_bottom_px"],
                      color=TRACE_BGR)
         pivot = trace.get("entry_anchor_x") or trace["x_entry_px"]
-        disp_cm = abs(lastp[0] - pivot) / trace["px_per_cm"]
-        cv2.putText(disp, f"{disp_cm:.2f} cm", (lastp[0] + 16, lastp[1] - 14),
+        disp_cm = abs(front_end[0] - pivot) / trace["px_per_cm"]
+        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, front_end[1] - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
 
     # Smoothed curve as the path; raw measured centroids kept as small dots
@@ -677,7 +703,9 @@ def save_trace_image(trace, out_path, calib=None):
         entry_x = trace["path_px"][0][0] if trace["path_px"] else trace["x_entry_px"]
     cv2.circle(disp, (entry_x, y_surf), 8, ENTRY_BGR, 2)
     if trace["path_px"]:
-        cv2.circle(disp, tuple(trace["path_px"][-1]), 9, CONTACT_BGR, -1)
+        # Connector from the centroid trail end to the leading tip, red marker there
+        cv2.line(disp, tuple(trace["path_px"][-1]), front_end, TRACE_BGR, 2, cv2.LINE_AA)
+        cv2.circle(disp, front_end, 9, CONTACT_BGR, -1)
 
     cv2.putText(disp, "Entry", (entry_x + 10, y_surf - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2)
