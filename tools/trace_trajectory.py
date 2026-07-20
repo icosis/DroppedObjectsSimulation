@@ -260,7 +260,7 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
         cv2.circle(disp, (x_land, y_bottom), 10, (255, 255, 255), 2)
         ref_b = x_ref if x_ref is not None else x0
         cv2.putText(disp, f"Expected {(x_land - ref_b) / px_per_cm:.2f} cm",
-                    (x_land + 16, y_bottom - 10),
+                    (x_land + 16, y_bottom + 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, COM_BGR, 2, cv2.LINE_AA)
 
 
@@ -585,15 +585,15 @@ def trace_video(video_path, calib, debug=False, video_out=None,
         draw_rulers(disp, x_tank_left, x_tank_right, y_surface, y_bottom,
                     px_per_cm, x_origin=int(anchor))
         cv2.circle(disp, (anchor, y_surface), 8, ENTRY_BGR, 2)
-        # Connector from the centroid trail end to the leading tip, then the
-        # red contact marker at the leading tip
-        cv2.line(disp, tuple(path_px[-1]), front_end, TRACE_BGR, 2, cv2.LINE_AA)
-        cv2.circle(disp, front_end, 9, CONTACT_BGR, -1)
-        dashed_vline(disp, front_end[0], front_end[1], y_bottom, color=TRACE_BGR)
+        # Red contact marker on the FLOOR axis at the leading-tip x, so it lines
+        # up with the blue expected marker (both compare horizontal distance).
+        land_pt = (front_end[0], y_bottom)
+        cv2.line(disp, tuple(path_px[-1]), land_pt, TRACE_BGR, 2, cv2.LINE_AA)
+        cv2.circle(disp, land_pt, 9, CONTACT_BGR, -1)
         draw_entry_angle(disp, anchor, y_surface, entry_angle, y_bottom,
                          px_per_cm, x_ref=anchor)
         disp_cm = abs(front_end[0] - anchor) / px_per_cm
-        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, front_end[1] - 14),
+        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, y_bottom - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
 
     if writer is not None:
@@ -682,12 +682,12 @@ def save_trace_image(trace, out_path, calib=None):
     if front_end is None and trace["path_px"]:
         front_end = tuple(trace["path_px"][-1])
 
+    y_bot = trace["y_bottom_px"]
+    land_pt = (front_end[0], y_bot)
     if len(trace["path_px"]) >= 2:
-        dashed_vline(disp, front_end[0], front_end[1], trace["y_bottom_px"],
-                     color=TRACE_BGR)
         pivot = trace.get("entry_anchor_x") or trace["x_entry_px"]
         disp_cm = abs(front_end[0] - pivot) / trace["px_per_cm"]
-        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, front_end[1] - 14),
+        cv2.putText(disp, f"{disp_cm:.2f} cm", (front_end[0] + 16, y_bot - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
 
     # Smoothed curve as the path; raw measured centroids kept as small dots
@@ -703,9 +703,9 @@ def save_trace_image(trace, out_path, calib=None):
         entry_x = trace["path_px"][0][0] if trace["path_px"] else trace["x_entry_px"]
     cv2.circle(disp, (entry_x, y_surf), 8, ENTRY_BGR, 2)
     if trace["path_px"]:
-        # Connector from the centroid trail end to the leading tip, red marker there
-        cv2.line(disp, tuple(trace["path_px"][-1]), front_end, TRACE_BGR, 2, cv2.LINE_AA)
-        cv2.circle(disp, front_end, 9, CONTACT_BGR, -1)
+        # Red contact marker on the floor axis at the leading-tip x
+        cv2.line(disp, tuple(trace["path_px"][-1]), land_pt, TRACE_BGR, 2, cv2.LINE_AA)
+        cv2.circle(disp, land_pt, 9, CONTACT_BGR, -1)
 
     cv2.putText(disp, "Entry", (entry_x + 10, y_surf - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2)
