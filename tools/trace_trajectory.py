@@ -239,7 +239,7 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
     # Line through the entry point along the pipe axis (nose down-right)
     cv2.line(disp, (x0 - dx, y_surface - dy), (x0 + dx, y_surface + dy),
              ENTRY_BGR, 2, cv2.LINE_AA)
-    cv2.putText(disp, f"entry {angle_deg:.1f} deg",
+    cv2.putText(disp, f"Entry {angle_deg:.1f} deg",
                 (x0 + dx + 8, y_surface + dy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2, cv2.LINE_AA)
 
@@ -253,14 +253,14 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
     dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
                    ENTRY_BGR, thickness=2)
     if px_per_cm:
-        d  = HALF_LENGTH_CM * px_per_cm
-        bx = int(x_land - d * np.cos(np.radians(angle_deg)))
-        by = int(y_bottom - d * np.sin(np.radians(angle_deg)))
-        cv2.circle(disp, (bx, by), 10, COM_BGR, -1)
-        cv2.circle(disp, (bx, by), 10, (255, 255, 255), 2)
+        # The CoM travels along this axis line; with no water it reaches floor
+        # depth exactly at the line/floor intersection — that IS the expected
+        # CoM landing (no L/2 offset, since the reference is the surface crossing).
+        cv2.circle(disp, (x_land, y_bottom), 10, COM_BGR, -1)
+        cv2.circle(disp, (x_land, y_bottom), 10, (255, 255, 255), 2)
         ref_b = x_ref if x_ref is not None else x0
-        cv2.putText(disp, f"expected CoM {(bx - ref_b) / px_per_cm:.2f} cm",
-                    (bx + 16, by + 6),
+        cv2.putText(disp, f"Expected CoM {(x_land - ref_b) / px_per_cm:.2f} cm",
+                    (x_land + 16, y_bottom - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, COM_BGR, 2, cv2.LINE_AA)
 
 
@@ -333,14 +333,12 @@ def trace_video(video_path, calib, debug=False, video_out=None,
 
     CONTACT_WALL_MARGIN_PX = 40
 
-    # CoM entry origin: at nose-touch the centre of mass sits
-    # (L/2)*cos(theta) up-ramp of the pierce point.  All displacement
-    # readouts are CoM-to-CoM (matching results_com.csv and the sim).
-    if entry_angle is not None:
-        com_offset_px = HALF_LENGTH_CM * np.cos(np.radians(entry_angle)) * px_per_cm
-        com_offset_cm = HALF_LENGTH_CM * np.cos(np.radians(entry_angle))
-    else:
-        com_offset_px = com_offset_cm = 0.0
+    # CoM entry origin = the pierce point.  The pipe slides along one straight
+    # axis line that crosses the surface at a single x; the nose crosses there,
+    # and later the CoM crosses the surface at that SAME x (pipe half-submerged).
+    # So the CoM-entry reference is the pierce anchor itself — no offset.
+    # Displacement is then CoM(surface) -> centroid(floor), matching the sim.
+    com_offset_px = com_offset_cm = 0.0
 
     def plausible_contact(cx_):
         if x_entry is not None and cx_ > x_entry + int(25 * px_per_cm):
@@ -643,29 +641,26 @@ def save_trace_image(trace, out_path, calib=None):
     # Water surface line
     cv2.line(disp, (0, y_surf), (w, y_surf), ENTRY_BGR, 1)
 
-    # cm rulers: depth on the left wall, CoM displacement on the floor
+    # cm rulers: depth on the left wall, CoM displacement on the floor.
+    # Ruler zero = pierce anchor = where the CoM crosses the surface (no offset).
     if calib is not None:
         origin = trace["path_px"][0][0] if trace["path_px"] else trace["x_entry_px"]
         ang = trace.get("entry_angle")
-        off_px = (HALF_LENGTH_CM * np.cos(np.radians(ang)) * trace["px_per_cm"]
-                  if ang is not None else 0.0)
-        draw_rulers(disp, calib.get("x_tank_left", 0), calib.get("x_tank_right"),
-                    y_surf, trace["y_bottom_px"], trace["px_per_cm"],
-                    x_origin=int(origin - off_px))
         anchor = trace.get("entry_anchor_x")
         pivot  = anchor if anchor is not None else origin
+        draw_rulers(disp, calib.get("x_tank_left", 0), calib.get("x_tank_right"),
+                    y_surf, trace["y_bottom_px"], trace["px_per_cm"],
+                    x_origin=int(pivot))
         draw_entry_angle(disp, pivot, y_surf, ang,
                          y_bottom=trace["y_bottom_px"],
                          px_per_cm=trace["px_per_cm"],
-                         x_ref=pivot - off_px)
+                         x_ref=pivot)
     if len(trace["path_px"]) >= 2:
         lastp = trace["path_px"][-1]
         dashed_vline(disp, lastp[0], lastp[1], trace["y_bottom_px"],
                      color=TRACE_BGR)
-        ang = trace.get("entry_angle")
-        off_cm = (HALF_LENGTH_CM * np.cos(np.radians(ang))
-                  if ang is not None else 0.0)
-        disp_cm = (abs(lastp[0] - trace["x_entry_px"]) / trace["px_per_cm"]) + off_cm
+        pivot = trace.get("entry_anchor_x") or trace["x_entry_px"]
+        disp_cm = abs(lastp[0] - pivot) / trace["px_per_cm"]
         cv2.putText(disp, f"{disp_cm:.2f} cm", (lastp[0] + 16, lastp[1] - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, TRACE_BGR, 2, cv2.LINE_AA)
 
@@ -684,7 +679,7 @@ def save_trace_image(trace, out_path, calib=None):
     if trace["path_px"]:
         cv2.circle(disp, tuple(trace["path_px"][-1]), 9, CONTACT_BGR, -1)
 
-    cv2.putText(disp, "entry", (entry_x + 10, y_surf - 8),
+    cv2.putText(disp, "Entry", (entry_x + 10, y_surf - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, ENTRY_BGR, 2)
     cv2.imwrite(out_path, disp)
     print(f"  Saved trace image → {out_path}")
