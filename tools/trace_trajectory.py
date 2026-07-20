@@ -48,7 +48,6 @@ TRACE_BGR   = (0, 165, 255)   # orange path
 ENTRY_BGR   = (0, 255, 255)   # yellow entry marker
 CONTACT_BGR = (0, 80, 255)    # red contact marker
 RULER_BGR   = (255, 255, 255) # ruler ticks and labels
-LAND_BGR    = (0, 210, 0)     # projected straight-line landing marker
 HALF_LENGTH_CM = 7.62 / 2.0   # pipe half-length: CoM sits this far up-axis of the nose
 COM_BGR     = (255, 120, 0)   # centre-of-mass marker (blue)
 DEBUG_WIN   = "Trajectory (q = quit)"
@@ -253,7 +252,6 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
         return
     dashed_segment(disp, (x0 + dx, y_surface + dy), (x_land, y_bottom),
                    ENTRY_BGR, thickness=2)
-    cv2.circle(disp, (x_land, y_bottom), 9, LAND_BGR, -1)
     if px_per_cm:
         d  = HALF_LENGTH_CM * px_per_cm
         bx = int(x_land - d * np.cos(np.radians(angle_deg)))
@@ -264,14 +262,6 @@ def draw_entry_angle(disp, x0, y_surface, angle_deg, y_bottom=None,
         cv2.putText(disp, f"expected CoM {(bx - ref_b) / px_per_cm:.2f} cm",
                     (bx + 16, by + 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, COM_BGR, 2, cv2.LINE_AA)
-    if px_per_cm:
-        ref = x_ref if x_ref is not None else x0
-        cv2.putText(disp, f"{(x_land - ref) / px_per_cm:.2f} cm",
-                    (x_land + 12, y_bottom - 34),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, LAND_BGR, 2, cv2.LINE_AA)
-    cv2.putText(disp, "straight-line landing",
-                (x_land + 12, y_bottom - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, LAND_BGR, 2, cv2.LINE_AA)
 
 
 def trace_video(video_path, calib, debug=False, video_out=None,
